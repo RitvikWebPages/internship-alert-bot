@@ -189,14 +189,18 @@ def ai_find_recruiter(company: str):
         response = client.models.generate_content(
             model=model,
             contents=(
-                f"Search the web for a real, named recruiter, university/campus "
-                f"recruiter, or talent acquisition / hiring manager who currently "
-                f"works at the company \"{company}\", ideally one involved in "
-                f"hiring interns or new grads. Only answer if a search result "
-                f"gives you their actual name and a linkedin.com/in/ profile URL. "
-                f"Reply with EXACTLY one line in the format "
-                f"'NAME | TITLE | LINKEDIN_URL' if found, or exactly 'NOT_FOUND' "
-                f"if you cannot ground an answer in a real search result."
+                f'Run a Google search for: site:linkedin.com/in "{company}" '
+                f'(recruiter OR "talent acquisition" OR "university relations" '
+                f'OR "campus recruiting" OR "technical recruiter"). '
+                f"LinkedIn profile pages are indexed with titles formatted like "
+                f"'First Last - Job Title - Company | LinkedIn' — read the titles "
+                f"and URLs of the search results to find one real named person "
+                f"who appears to currently or recently work in recruiting/talent "
+                f"acquisition at \"{company}\". Only answer if a search result "
+                f"actually gives you their name and a linkedin.com/in/... URL — "
+                f"do not guess or invent a name. Reply with EXACTLY one line in "
+                f"the format 'NAME | TITLE | LINKEDIN_URL' if you found one, or "
+                f"exactly 'NOT_FOUND' if the search results don't contain one."
             ),
             config=types.GenerateContentConfig(
                 tools=[types.Tool(google_search=types.GoogleSearch())]
