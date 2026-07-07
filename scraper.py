@@ -172,22 +172,22 @@ LINKEDIN_PROFILE_RE = re.compile(r"https?://([a-z]{2,3}\.)?linkedin\.com/in/[A-Z
 
 def ai_find_recruiter(company: str):
     """Best-effort web-search lookup of a named recruiter/hiring manager at
-    `company`, via the OpenAI API. Returns a dict with name/title/url, or
-    None if no OPENAI_API_KEY is configured, nothing grounded was found, or
-    the lookup fails for any reason (never raises — this is a nice-to-have,
-    not something that should break the pipeline)."""
-    api_key = os.environ.get("OPENAI_API_KEY")
+    `company`, via the Gemini API (Google Search grounding). Returns a dict
+    with name/title/url, or None if no GEMINI_API_KEY is configured, nothing
+    grounded was found, or the lookup fails for any reason (never raises —
+    this is a nice-to-have, not something that should break the pipeline)."""
+    api_key = os.environ.get("GEMINI_API_KEY")
     if not api_key:
         return None
     try:
-        from openai import OpenAI
+        from google import genai
+        from google.genai import types
 
-        client = OpenAI(api_key=api_key)
-        model = os.environ.get("OPENAI_MODEL", "gpt-4o-mini")
-        response = client.responses.create(
+        client = genai.Client(api_key=api_key)
+        model = os.environ.get("GEMINI_MODEL", "gemini-2.5-flash")
+        response = client.models.generate_content(
             model=model,
-            tools=[{"type": "web_search_preview"}],
-            input=(
+            contents=(
                 f"Search the web for a real, named recruiter, university/campus "
                 f"recruiter, or talent acquisition / hiring manager who currently "
                 f"works at the company \"{company}\", ideally one involved in "
@@ -197,8 +197,11 @@ def ai_find_recruiter(company: str):
                 f"'NAME | TITLE | LINKEDIN_URL' if found, or exactly 'NOT_FOUND' "
                 f"if you cannot ground an answer in a real search result."
             ),
+            config=types.GenerateContentConfig(
+                tools=[types.Tool(google_search=types.GoogleSearch())]
+            ),
         )
-        text = (response.output_text or "").strip()
+        text = (response.text or "").strip()
         if text == "NOT_FOUND" or "|" not in text:
             return None
         name, title, url = [part.strip() for part in text.split("|", 2)]

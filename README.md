@@ -17,11 +17,11 @@ recruiter/hiring manager at that company.
    - `EMAIL_ADDRESS` — the Gmail address that will send the alerts
    - `EMAIL_PASSWORD` — the app password from step 2
    - `TO_EMAIL` — the address to receive alerts (optional, defaults to `EMAIL_ADDRESS`)
-   - `OPENAI_API_KEY` — optional. If set, each new posting also gets a
+   - `GEMINI_API_KEY` — optional. If set, each new posting also gets a
      best-effort, web-search-grounded suggestion of a named recruiter/hiring
-     manager at that company (via the OpenAI API), labeled unverified,
-     alongside the LinkedIn search link. If unset, this is skipped and you
-     just get the search link.
+     manager at that company (via the Gemini API's Google Search grounding),
+     labeled unverified, alongside the LinkedIn search link. If unset, this
+     is skipped and you just get the search link.
 4. **Seed the state before enabling alerts.** The first run has no history, so
    without seeding you'll get emailed every currently-open matching posting at
    once (currently ~150+). Go to Actions → "Check for new internships" → Run
