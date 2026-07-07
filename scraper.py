@@ -168,7 +168,13 @@ def save_state(seen_ids: set):
 
 
 def linkedin_search_url(company: str) -> str:
-    query = f'{company} recruiter OR "university relations" OR "talent acquisition"'
+    # Company is a required exact-phrase term (AND); role variants are grouped
+    # as alternatives (OR). Without the AND + grouping, LinkedIn treats every
+    # term as a flat OR and returns generic recruiters from any company.
+    query = (
+        f'"{company}" AND (recruiter OR "talent acquisition" '
+        f'OR "university relations" OR "campus recruiting")'
+    )
     return "https://www.linkedin.com/search/results/people/?keywords=" + urllib.parse.quote(query)
 
 
