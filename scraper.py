@@ -167,6 +167,49 @@ def save_state(seen_ids: set):
     STATE_FILE.write_text(json.dumps({"seen_ids": sorted(seen_ids)}, indent=2))
 
 
+LINKEDIN_PROFILE_RE = re.compile(r"https?://([a-z]{2,3}\.)?linkedin\.com/in/[A-Za-z0-9\-_%]+/?")
+
+
+def ai_find_recruiter(company: str):
+    """Best-effort web-search lookup of a named recruiter/hiring manager at
+    `company`, via the OpenAI API. Returns a dict with name/title/url, or
+    None if no OPENAI_API_KEY is configured, nothing grounded was found, or
+    the lookup fails for any reason (never raises — this is a nice-to-have,
+    not something that should break the pipeline)."""
+    api_key = os.environ.get("OPENAI_API_KEY")
+    if not api_key:
+        return None
+    try:
+        from openai import OpenAI
+
+        client = OpenAI(api_key=api_key)
+        model = os.environ.get("OPENAI_MODEL", "gpt-4o-mini")
+        response = client.responses.create(
+            model=model,
+            tools=[{"type": "web_search_preview"}],
+            input=(
+                f"Search the web for a real, named recruiter, university/campus "
+                f"recruiter, or talent acquisition / hiring manager who currently "
+                f"works at the company \"{company}\", ideally one involved in "
+                f"hiring interns or new grads. Only answer if a search result "
+                f"gives you their actual name and a linkedin.com/in/ profile URL. "
+                f"Reply with EXACTLY one line in the format "
+                f"'NAME | TITLE | LINKEDIN_URL' if found, or exactly 'NOT_FOUND' "
+                f"if you cannot ground an answer in a real search result."
+            ),
+        )
+        text = (response.output_text or "").strip()
+        if text == "NOT_FOUND" or "|" not in text:
+            return None
+        name, title, url = [part.strip() for part in text.split("|", 2)]
+        if not LINKEDIN_PROFILE_RE.match(url):
+            return None
+        return {"name": name, "title": title, "url": url}
+    except Exception as exc:
+        print(f"AI recruiter lookup for {company!r} failed, skipping: {exc}")
+        return None
+
+
 def linkedin_search_url(company: str) -> str:
     # Company is a required exact-phrase term (AND); role variants are grouped
     # as alternatives (OR). Without the AND + grouping, LinkedIn treats every
@@ -183,15 +226,29 @@ def build_email_body(new_rows: list) -> str:
     for row in new_rows:
         by_category.setdefault(row["category"], []).append(row)
 
+    recruiter_cache = {}
+
     lines = [f"{len(new_rows)} new internship posting(s) found:\n"]
     for category, rows in by_category.items():
         lines.append(f"\n=== {category} ===\n")
         for row in rows:
-            lines.append(f"- {row['company']} — {row['role']}")
+            company = row["company"]
+            lines.append(f"- {company} — {row['role']}")
             lines.append(f"  Location: {row['location']}")
             if row["apply_url"]:
                 lines.append(f"  Apply: {row['apply_url']}")
-            lines.append(f"  Find a hiring/recruiting contact on LinkedIn: {linkedin_search_url(row['company'])}")
+
+            if company not in recruiter_cache:
+                recruiter_cache[company] = ai_find_recruiter(company)
+            recruiter = recruiter_cache[company]
+            if recruiter:
+                lines.append(
+                    f"  AI-suggested contact (unverified, double-check before reaching out): "
+                    f"{recruiter['name']} — {recruiter['title']}"
+                )
+                lines.append(f"  {recruiter['url']}")
+
+            lines.append(f"  Find a hiring/recruiting contact on LinkedIn: {linkedin_search_url(company)}")
             lines.append("")
     return "\n".join(lines)
 
