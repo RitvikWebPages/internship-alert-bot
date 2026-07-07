@@ -178,6 +178,7 @@ def ai_find_recruiter(company: str):
     this is a nice-to-have, not something that should break the pipeline)."""
     api_key = os.environ.get("GEMINI_API_KEY")
     if not api_key:
+        print(f"AI recruiter lookup for {company!r}: no GEMINI_API_KEY set, skipping.")
         return None
     try:
         from google import genai
@@ -202,10 +203,12 @@ def ai_find_recruiter(company: str):
             ),
         )
         text = (response.text or "").strip()
+        print(f"AI recruiter lookup for {company!r}: raw response: {text!r}")
         if text == "NOT_FOUND" or "|" not in text:
             return None
         name, title, url = [part.strip() for part in text.split("|", 2)]
         if not LINKEDIN_PROFILE_RE.match(url):
+            print(f"AI recruiter lookup for {company!r}: url {url!r} didn't match linkedin.com/in/ pattern, discarding.")
             return None
         return {"name": name, "title": title, "url": url}
     except Exception as exc:
