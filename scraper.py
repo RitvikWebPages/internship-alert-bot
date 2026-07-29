@@ -1,11 +1,13 @@
 """
-Monitors the SimplifyJobs Summer2026-Internships README for new postings in
-Software Engineering, Hardware Engineering, and Data Science/AI/ML, skips
-postings that require an advanced degree or don't offer sponsorship/require
-US citizenship, and emails only the new matches via Gmail SMTP.
+Monitors several internship boards (SimplifyJobs, the jobright-ai GitHub repos,
+and intern-list.com) for new postings in Software Engineering, Hardware /
+Electrical & Computer Engineering, and Data Science/AI/ML, skips postings that
+require an advanced degree or don't offer sponsorship/require US citizenship,
+and emails only the new matches via Gmail SMTP.
+
+Source fetching and filtering lives in sources.py.
 """
 import argparse
-import hashlib
 import json
 import os
 import re
@@ -16,144 +18,17 @@ import urllib.parse
 from email.mime.text import MIMEText
 from pathlib import Path
 
-import requests
-from bs4 import BeautifulSoup
+import sources
 
-README_URL = "https://raw.githubusercontent.com/SimplifyJobs/Summer2026-Internships/dev/README.md"
 STATE_FILE = Path(__file__).parent / "state.json"
 
-# Section header keywords (matched case-insensitively against the "## ..." line)
-CATEGORIES = {
-    "Software Engineering": ["software engineering"],
-    "Hardware Engineering": ["hardware engineering"],
-    "Data Science, AI & Machine Learning": ["data science", "machine learning"],
-}
-
-# Skip any row whose company/role text contains one of these
-BLOCKED_SYMBOLS = ["🎓", "🛂", "🇺🇸"]
-
-
-def fetch_readme() -> str:
-    resp = requests.get(README_URL, timeout=30)
-    resp.raise_for_status()
-    return resp.text
-
-
-def split_sections(markdown: str) -> dict:
-    """Split the README into {header_text: section_body} by '## ' headers."""
-    lines = markdown.splitlines()
-    header_positions = [
-        (i, line) for i, line in enumerate(lines) if line.startswith("## ")
-    ]
-    sections = {}
-    for idx, (line_no, header_line) in enumerate(header_positions):
-        end = (
-            header_positions[idx + 1][0]
-            if idx + 1 < len(header_positions)
-            else len(lines)
-        )
-        sections[header_line] = "\n".join(lines[line_no + 1 : end])
-    return sections
-
-
-def match_category(header_line: str):
-    normalized = header_line.lower()
-    for category, keywords in CATEGORIES.items():
-        if all(kw in normalized for kw in keywords):
-            return category
-    return None
-
-
-def parse_location(td) -> str:
-    details = td.find("details")
-    if details:
-        summary = details.find("summary")
-        if summary:
-            summary.extract()
-        for br in details.find_all("br"):
-            br.replace_with(", ")
-        return re.sub(r"\s+", " ", details.get_text()).strip(", ").strip()
-    return td.get_text(strip=True)
-
-
-def parse_application(td):
-    apply_url = None
-    simplify_id = None
-    for a in td.find_all("a", href=True):
-        href = a["href"]
-        m = re.search(r"simplify\.jobs/p/([a-f0-9\-]+)", href)
-        if m:
-            simplify_id = m.group(1)
-        elif apply_url is None:
-            apply_url = href
-    return apply_url, simplify_id
-
-
-def parse_table(table, category: str) -> list:
-    rows = []
-    last_company = None
-    for tr in table.select("tbody tr"):
-        tds = tr.find_all("td", recursive=False)
-        if len(tds) < 4:
-            continue
-        company_td, role_td, location_td = tds[0], tds[1], tds[2]
-        application_td = tds[3]
-        age_td = tds[4] if len(tds) > 4 else None
-
-        company_text = company_td.get_text(strip=True)
-        if company_text in ("↳", ""):
-            company = last_company
-        else:
-            company = company_text.replace("🔥", "").strip()
-            last_company = company
-
-        role_text = role_td.get_text(strip=True)
-        role_clean = "".join(
-            ch for ch in role_text if ch not in BLOCKED_SYMBOLS
-        ).strip()
-
-        if any(sym in company_text or sym in role_text for sym in BLOCKED_SYMBOLS):
-            continue
-
-        location = parse_location(location_td)
-        apply_url, simplify_id = parse_application(application_td)
-        age = age_td.get_text(strip=True) if age_td else ""
-
-        if simplify_id:
-            row_id = simplify_id
-        else:
-            digest = hashlib.sha1(
-                f"{company}|{role_clean}|{location}|{apply_url}".encode()
-            ).hexdigest()
-            row_id = digest
-
-        rows.append(
-            {
-                "id": row_id,
-                "category": category,
-                "company": company,
-                "role": role_clean,
-                "location": location,
-                "apply_url": apply_url or "",
-                "age": age,
-            }
-        )
-    return rows
-
-
-def parse_readme(markdown: str) -> list:
-    sections = split_sections(markdown)
-    all_rows = []
-    for header_line, body in sections.items():
-        category = match_category(header_line)
-        if not category:
-            continue
-        soup = BeautifulSoup(body, "html.parser")
-        table = soup.find("table")
-        if not table:
-            continue
-        all_rows.extend(parse_table(table, category))
-    return all_rows
+# Postings carry accented, CJK and emoji characters in company and role names.
+# On a console defaulting to a legacy codepage (cp1252 on Windows) printing one
+# raises UnicodeEncodeError and kills the run, so replace what can't be encoded
+# rather than let logging take down the alerting.
+for _stream in (sys.stdout, sys.stderr):
+    if hasattr(_stream, "reconfigure"):
+        _stream.reconfigure(errors="replace")
 
 
 def load_state() -> set:
@@ -287,14 +162,24 @@ def main():
         help="Populate state.json with current postings without sending an email. "
         "Use this on the very first run so you don't get emailed every existing posting.",
     )
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Print what would be emailed without sending anything or touching state.json.",
+    )
     args = parser.parse_args()
 
-    markdown = fetch_readme()
-    rows = parse_readme(markdown)
-    print(f"Parsed {len(rows)} eligible rows across target categories.")
+    rows = sources.fetch_all()
+    print(f"Parsed {len(rows)} eligible rows across all sources.")
 
     seen_ids = load_state()
     new_rows = [row for row in rows if row["id"] not in seen_ids]
+
+    if args.dry_run:
+        print(f"Dry run: {len(new_rows)} posting(s) would be emailed.\n")
+        for row in new_rows:
+            print(f"[{row['category']}] {row['company']} — {row['role']} ({row['location']})")
+        return
 
     all_ids = seen_ids | {row["id"] for row in rows}
     save_state(all_ids)
