@@ -19,6 +19,7 @@ from email.mime.text import MIMEText
 from pathlib import Path
 
 import enrich
+import resume
 import sources
 
 STATE_FILE = Path(__file__).parent / "state.json"
@@ -152,6 +153,29 @@ def screen_postings(new_rows: list) -> list:
     return kept
 
 
+def format_resume_fit(detail, variants, category) -> list:
+    """Which resume to send and what it's missing, for one posting.
+
+    Deterministic keyword coverage only — no model involved, so this costs
+    nothing and runs for every posting. `tailor.py` does the line-by-line
+    rewrite pass for the handful of jobs actually worth applying to.
+    """
+    keywords = detail.get("hard_skills") or []
+    if not variants or not keywords:
+        return []
+    name = resume.pick_variant(variants, keywords, category)
+    if not name:
+        return []
+    cov = resume.coverage(variants[name], keywords)
+    lines = [
+        "  Best resume: resume-%s.pdf (%d/%d keywords)"
+        % (name, len(cov["have"]), len(keywords))
+    ]
+    if cov["missing"]:
+        lines.append("  Work in if true: %s" % ", ".join(cov["missing"]))
+    return lines
+
+
 def format_detail(detail) -> list:
     """The lines an enriched posting contributes to the email."""
     lines = []
@@ -189,6 +213,11 @@ def build_email_body(new_rows: list) -> str:
         by_category.setdefault(row["category"], []).append(row)
 
     recruiter_cache = {}
+    try:
+        variants = resume.load_variants()
+    except Exception as exc:
+        print(f"Resume matching unavailable, continuing without it: {exc}")
+        variants = {}
 
     lines = [f"{len(new_rows)} new internship posting(s) found:\n"]
     for category, rows in by_category.items():
@@ -202,6 +231,9 @@ def build_email_body(new_rows: list) -> str:
 
             if row.get("detail"):
                 lines.extend(format_detail(row["detail"]))
+                lines.extend(
+                    format_resume_fit(row["detail"], variants, row["category"])
+                )
 
             if company not in recruiter_cache:
                 recruiter_cache[company] = ai_find_recruiter(company)

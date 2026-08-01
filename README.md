@@ -114,6 +114,41 @@ not inferred from prose by a model. Postings not backed by jobright
 (SimplifyJobs rows linking to company sites) still get the age filter, just no
 keywords.
 
+## Resume tailoring
+
+The resume variants in [resumes/](resumes) are matched against each posting's
+keywords. Every alert says which variant fits best and which keywords it
+doesn't currently evidence:
+
+```
+Best resume: resume-software.pdf (5/11 keywords)
+Work in if true: Java programming, Git, Spring framework, Cloud services
+```
+
+That part is plain string matching — no model, no API cost, so it runs for
+every posting. Matching is whole-word on purpose: a posting asking for `Java`
+is **not** satisfied by `JavaScript` in the skills line.
+
+For a job actually worth applying to, [tailor.py](tailor.py) does the
+line-by-line pass:
+
+```bash
+python tailor.py https://jobright.ai/jobs/info/6a6cd22257120971bf3ad53a
+```
+
+It picks the variant, lists covered vs missing keywords, and — with
+`GEMINI_API_KEY` set — proposes rewrites of specific existing bullets. The
+prompt only lets it resurface work already on the resume in the posting's
+vocabulary; a keyword with nothing behind it comes back as a `GAP` line
+suggesting how to genuinely acquire it, not as invented experience. Without a
+key the coverage lists still work; only the rewrites are skipped.
+
+```bash
+GEMINI_API_KEY=... python tailor.py <job-url>
+```
+
+Add `--resume hardware` to force a variant, `--no-ai` to skip the model.
+
 ## Notes
 
 - [sources.py](sources.py) holds all fetching and filtering, one function per
