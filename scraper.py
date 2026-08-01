@@ -18,6 +18,7 @@ import urllib.parse
 from email.mime.text import MIMEText
 from pathlib import Path
 
+import enrich
 import sources
 
 STATE_FILE = Path(__file__).parent / "state.json"
@@ -106,6 +107,82 @@ def linkedin_search_url(company: str) -> str:
     return "https://www.linkedin.com/search/results/people/?keywords=" + urllib.parse.quote(query)
 
 
+def screen_postings(new_rows: list) -> list:
+    """Drop postings not worth applying to, and attach job detail to the rest.
+
+    Two passes, cheap first. Every feed carries rows long past the point where
+    applying is worth it, and dates come free with the listing — so age filters
+    the bulk out without a single request. Only what survives gets a detail
+    fetch, which is what catches postings that have been taken down outright.
+    """
+    limit = enrich.max_age_days()
+    fresh = []
+    stale = 0
+    for row in new_rows:
+        if enrich.is_stale(row, limit):
+            stale += 1
+            continue
+        fresh.append(row)
+    if stale:
+        print(f"Dropped {stale} posting(s) older than {limit} days.")
+
+    budget = enrich.max_enrich()
+    kept, dead, enriched = [], 0, 0
+    for row in fresh:
+        job_id = sources.jobright_id(row.get("apply_url"))
+        if not job_id or budget <= 0:
+            kept.append(row)
+            continue
+        budget -= 1
+        detail = enrich.fetch_job_detail(job_id)
+        if detail is None:
+            # Couldn't read it — keep the posting rather than lose a real job.
+            kept.append(row)
+            continue
+        if detail["is_deleted"]:
+            dead += 1
+            continue
+        row["detail"] = detail
+        enriched += 1
+        kept.append(row)
+
+    if dead:
+        print(f"Dropped {dead} posting(s) already taken down.")
+    print(f"Enriched {enriched} posting(s) with job detail.")
+    return kept
+
+
+def format_detail(detail) -> list:
+    """The lines an enriched posting contributes to the email."""
+    lines = []
+    if detail.get("publish_desc"):
+        lines.append(f"  Posted: {detail['publish_desc']}")
+    if detail.get("applicants") is not None:
+        lines.append(f"  Applicants so far: {detail['applicants']}")
+
+    flags = []
+    if detail.get("h1b_sponsor"):
+        flags.append("H1B sponsor likely")
+    if detail.get("citizen_only"):
+        flags.append("US citizens only")
+    if detail.get("clearance"):
+        flags.append("security clearance required")
+    if flags:
+        lines.append(f"  Flags: {', '.join(flags)}")
+
+    if detail.get("hard_skills"):
+        lines.append(f"  ATS keywords: {', '.join(detail['hard_skills'])}")
+    if detail.get("must_have"):
+        lines.append("  Must have:")
+        for item in detail["must_have"][:6]:
+            lines.append(f"    - {item}")
+    if detail.get("preferred"):
+        lines.append("  Preferred:")
+        for item in detail["preferred"][:4]:
+            lines.append(f"    - {item}")
+    return lines
+
+
 def build_email_body(new_rows: list) -> str:
     by_category = {}
     for row in new_rows:
@@ -122,6 +199,9 @@ def build_email_body(new_rows: list) -> str:
             lines.append(f"  Location: {row['location']}")
             if row["apply_url"]:
                 lines.append(f"  Apply: {row['apply_url']}")
+
+            if row.get("detail"):
+                lines.extend(format_detail(row["detail"]))
 
             if company not in recruiter_cache:
                 recruiter_cache[company] = ai_find_recruiter(company)
@@ -175,10 +255,18 @@ def main():
     seen_ids = load_state()
     new_rows = [row for row in rows if row["id"] not in seen_ids]
 
+    # Seeding only needs ids, and enrichment costs a request per posting, so
+    # skip all of it on a seed run.
+    if not args.seed_only:
+        new_rows = screen_postings(new_rows)
+
     if args.dry_run:
         print(f"Dry run: {len(new_rows)} posting(s) would be emailed.\n")
         for row in new_rows:
             print(f"[{row['category']}] {row['company']} — {row['role']} ({row['location']})")
+            detail = row.get("detail")
+            if detail and detail["hard_skills"]:
+                print(f"    ATS keywords: {', '.join(detail['hard_skills'])}")
         return
 
     all_ids = seen_ids | {row["id"] for row in rows}

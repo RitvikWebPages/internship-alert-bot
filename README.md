@@ -84,6 +84,36 @@ Use `python scraper.py --seed-only` to update `state.json` without emailing, or
 `python scraper.py --dry-run` to print what *would* be emailed while touching
 neither `state.json` nor your inbox — handy when tuning the ECE filter.
 
+## Filtering out stale postings
+
+Every feed keeps rows around long after a posting closes, so alerts used to
+arrive for jobs that were a month old or already taken down.
+[enrich.py](enrich.py) screens them out in two passes:
+
+1. **By age**, using the date each feed already ships (`11d` from SimplifyJobs,
+   `Jul 29` from the jobright repos, `2026-07-28` from intern-list). Costs no
+   requests. Anything older than `MAX_POSTING_AGE_DAYS` (default 21) is dropped.
+   A date that can't be parsed counts as fresh — losing a real job is worse
+   than one stale alert.
+2. **By liveness**, reading jobright's `isDeleted` flag off the posting. This
+   catches jobs pulled before they aged out. Only postings surviving step 1 are
+   checked, at one request each, capped by `MAX_ENRICH_REQUESTS` (default 60).
+
+Both are optional environment variables, settable as repo variables or inline:
+
+```
+MAX_POSTING_AGE_DAYS=14 python scraper.py --dry-run
+```
+
+## ATS keywords
+
+The same jobright payload carries a structured, weighted skill list and a
+must-have/preferred qualification split, so each enriched posting in the email
+comes with the keywords an ATS will screen on — read straight off the posting,
+not inferred from prose by a model. Postings not backed by jobright
+(SimplifyJobs rows linking to company sites) still get the age filter, just no
+keywords.
+
 ## Notes
 
 - [sources.py](sources.py) holds all fetching and filtering, one function per
