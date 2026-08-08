@@ -10,11 +10,9 @@ Source fetching and filtering lives in sources.py.
 import argparse
 import json
 import os
-import re
 import smtplib
 import ssl
 import sys
-import urllib.parse
 from email.mime.text import MIMEText
 from pathlib import Path
 
@@ -42,76 +40,10 @@ def save_state(seen_ids: set):
     STATE_FILE.write_text(json.dumps({"seen_ids": sorted(seen_ids)}, indent=2))
 
 
-LINKEDIN_PROFILE_RE = re.compile(r"https?://([a-z]{2,3}\.)?linkedin\.com/in/[A-Za-z0-9\-_%]+/?")
-
-
-def ai_find_recruiter(company: str):
-    """Best-effort web-search lookup of a named recruiter/hiring manager at
-    `company`, via the Gemini API (Google Search grounding). Returns a dict
-    with name/title/url, or None if no GEMINI_API_KEY is configured, nothing
-    grounded was found, or the lookup fails for any reason (never raises —
-    this is a nice-to-have, not something that should break the pipeline)."""
-    api_key = os.environ.get("GEMINI_API_KEY")
-    if not api_key:
-        print(f"AI recruiter lookup for {company!r}: no GEMINI_API_KEY set, skipping.")
-        return None
-    try:
-        from google import genai
-        from google.genai import types
-
-        client = genai.Client(api_key=api_key)
-        model = os.environ.get("GEMINI_MODEL", "gemini-2.5-flash")
-        response = client.models.generate_content(
-            model=model,
-            contents=(
-                f'Run a Google search for: site:linkedin.com/in "{company}" '
-                f'(recruiter OR "talent acquisition" OR "university relations" '
-                f'OR "campus recruiting" OR "technical recruiter"). '
-                f"LinkedIn profile pages are indexed with titles formatted like "
-                f"'First Last - Job Title - Company | LinkedIn' — read the titles "
-                f"and URLs of the search results to find one real named person "
-                f"who appears to currently or recently work in recruiting/talent "
-                f"acquisition at \"{company}\". Only answer if a search result "
-                f"actually gives you their name and a linkedin.com/in/... URL — "
-                f"do not guess or invent a name. Reply with EXACTLY one line in "
-                f"the format 'NAME | TITLE | LINKEDIN_URL' if you found one, or "
-                f"exactly 'NOT_FOUND' if the search results don't contain one."
-            ),
-            config=types.GenerateContentConfig(
-                tools=[types.Tool(google_search=types.GoogleSearch())]
-            ),
-        )
-        text = (response.text or "").strip()
-        print(f"AI recruiter lookup for {company!r}: raw response: {text!r}")
-        if text == "NOT_FOUND" or "|" not in text:
-            return None
-        name, title, url = [part.strip() for part in text.split("|", 2)]
-        if not LINKEDIN_PROFILE_RE.match(url):
-            print(f"AI recruiter lookup for {company!r}: url {url!r} didn't match linkedin.com/in/ pattern, discarding.")
-            return None
-        return {"name": name, "title": title, "url": url}
-    except Exception as exc:
-        print(f"AI recruiter lookup for {company!r} failed, skipping: {exc}")
-        return None
-
-
-def linkedin_search_url(company: str) -> str:
-    # Company is a required exact-phrase term (AND); role variants are grouped
-    # as alternatives (OR). Without the AND + grouping, LinkedIn treats every
-    # term as a flat OR and returns generic recruiters from any company.
-    query = (
-        f'"{company}" AND (recruiter OR "talent acquisition" '
-        f'OR "university relations" OR "campus recruiting")'
-    )
-    return "https://www.linkedin.com/search/results/people/?keywords=" + urllib.parse.quote(query)
-
-
 def build_email_body(new_rows: list) -> str:
     by_category = {}
     for row in new_rows:
         by_category.setdefault(row["category"], []).append(row)
-
-    recruiter_cache = {}
 
     lines = [f"{len(new_rows)} new internship posting(s) found:\n"]
     for category, rows in by_category.items():
@@ -122,18 +54,6 @@ def build_email_body(new_rows: list) -> str:
             lines.append(f"  Location: {row['location']}")
             if row["apply_url"]:
                 lines.append(f"  Apply: {row['apply_url']}")
-
-            if company not in recruiter_cache:
-                recruiter_cache[company] = ai_find_recruiter(company)
-            recruiter = recruiter_cache[company]
-            if recruiter:
-                lines.append(
-                    f"  AI-suggested contact (unverified, double-check before reaching out): "
-                    f"{recruiter['name']} — {recruiter['title']}"
-                )
-                lines.append(f"  {recruiter['url']}")
-
-            lines.append(f"  Find a hiring/recruiting contact on LinkedIn: {linkedin_search_url(company)}")
             lines.append("")
     return "\n".join(lines)
 

@@ -3,8 +3,7 @@
 Watches several internship boards on a schedule, filters to Software
 Engineering / Hardware / Electrical & Computer Engineering / Data Science, AI &
 Machine Learning roles, and emails you only the postings you haven't seen
-before. Each emailed posting includes a pre-built LinkedIn search link to help
-you find a recruiter/hiring manager at that company.
+before.
 
 ## Sources
 
@@ -58,11 +57,6 @@ run, so one broken feed won't stop the others from alerting.
    - `EMAIL_ADDRESS` — the Gmail address that will send the alerts
    - `EMAIL_PASSWORD` — the app password from step 2
    - `TO_EMAIL` — the address to receive alerts (optional, defaults to `EMAIL_ADDRESS`)
-   - `GEMINI_API_KEY` — optional. If set, each new posting also gets a
-     best-effort, web-search-grounded suggestion of a named recruiter/hiring
-     manager at that company (via the Gemini API's Google Search grounding),
-     labeled unverified, alongside the LinkedIn search link. If unset, this
-     is skipped and you just get the search link.
 4. **Seed the state before enabling alerts.** The first run has no history, so
    without seeding you'll get emailed every currently-open matching posting at
    once (currently ~430 across all sources). Go to Actions → "Check for new
@@ -98,9 +92,3 @@ neither `state.json` nor your inbox — handy when tuning the ECE filter.
   the view as JSON. It's the same public data the page itself displays, read
   once per source per run. If intern-list changes how it embeds Airtable this
   will break; the source will log the failure and the other feeds keep working.
-- LinkedIn login/search is **not** automated in the workflow — LinkedIn's
-  Terms of Service prohibit scripted/scraping access, and doing so from CI
-  would require storing your LinkedIn credentials as a secret, which risks
-  the account being flagged. Instead, each email includes a ready-to-click
-  LinkedIn people-search URL for the company so you can pick a recruiter
-  yourself in one click.
