@@ -79,6 +79,46 @@ def stable_id(*parts) -> str:
     return hashlib.sha1("|".join(str(p) for p in parts).encode()).hexdigest()
 
 
+# --------------------------------------------------------------------------
+# US-only location filter
+# --------------------------------------------------------------------------
+# None of the feeds carry a separate country field, so this reads the free-text
+# location string. A multi-location posting that names both a Canadian and a
+# US site (e.g. "Montreal, QC, Canada, Los Angeles, CA, United States") is kept
+# open — an explicit "United States"/"USA" mention always wins, since a real US
+# option exists. Otherwise it's blocked only on an explicit non-US signal (a
+# country/province name, a Canadian province code, "UK"/"CAN"). A location
+# with no country signal at all (a bare "Austin, TX" or "NYC") is kept —
+# losing a real US posting costs more than including an unlabeled one.
+
+CANADA_PROVINCE_CODES = {
+    "AB", "BC", "MB", "NB", "NL", "NS", "NT", "NU", "ON", "PE", "QC", "SK", "YT",
+}
+OTHER_NON_US_CODES = {"UK", "CAN"}
+
+NON_US_SUBSTRINGS = [
+    "canada", "toronto", "montreal", "montréal", "kitchener",
+    "quebec", "québec", "british columbia", "alberta", "manitoba",
+    "saskatchewan", "nova scotia", "new brunswick", "newfoundland",
+    "prince edward island", "yukon", "northwest territories", "nunavut",
+    "united kingdom",
+]
+
+
+def is_us_location(location: str) -> bool:
+    text = (location or "").lower()
+    if "united states" in text or "usa" in text or re.search(r"\bus\b", text):
+        return True
+    if any(term in text for term in NON_US_SUBSTRINGS):
+        return False
+    tokens = {t.strip(" ().") for t in re.split(r"[,/]", location or "")}
+    tokens |= set((location or "").split())
+    tokens = {t.upper() for t in tokens if t}
+    if tokens & CANADA_PROVINCE_CODES or tokens & OTHER_NON_US_CODES:
+        return False
+    return True
+
+
 JOBRIGHT_JOB_RE = re.compile(r"jobright\.ai/jobs/info/([a-f0-9]+)")
 
 
@@ -425,6 +465,8 @@ def fetch_all() -> list:
         except Exception as exc:
             print("Source %r failed, skipping: %s" % (name, exc))
             continue
+
+        rows = [row for row in rows if is_us_location(row.get("location"))]
 
         added = 0
         for row in rows:
